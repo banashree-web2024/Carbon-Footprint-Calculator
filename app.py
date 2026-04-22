@@ -23,13 +23,15 @@ def login_required(f):
 
 # ------------------ DB CONNECTION ------------------ #
 import mysql.connector
+import os
 
 def get_db():
     return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="Shree#0309",   # put your MySQL password
-        database="carbon_app"
+        host=os.getenv("MYSQLHOST"),
+        user=os.getenv("MYSQLUSER"),
+        password=os.getenv("MYSQLPASSWORD"),
+        database=os.getenv("MYSQLDATABASE"),
+        port=int(os.getenv("MYSQLPORT", 3306))
     )
 
 # ------------------ HOME ------------------ #
