@@ -293,8 +293,19 @@ def history():
     rows = cur.fetchall()
     conn.close()
 
-    dates = [r["created_at"].strftime("%Y-%m-%d") for r in rows]
-    totals = [r["total_kg"] for r in rows]
+    # ---- SAFE DATE HANDLING (no crashes) ----
+    dates = []
+    for r in rows:
+        dt = r.get("created_at")
+
+        if dt is None:
+            dates.append("N/A")
+        elif hasattr(dt, "strftime"):
+            dates.append(dt.strftime("%Y-%m-%d"))
+        else:
+            dates.append(str(dt)[:10])
+
+    totals = [r.get("total_kg", 0) for r in rows]
 
     return render_template(
         "history.html",
