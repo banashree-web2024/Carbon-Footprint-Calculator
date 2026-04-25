@@ -3,6 +3,7 @@ import mysql.connector
 import json
 import os
 from functools import wraps
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = "replace_this_with_strong_secret"
@@ -47,17 +48,18 @@ def login():
         conn = get_db()
         cur = conn.cursor(dictionary=True)
 
+        # Fetch user WITHOUT checking password here
         cur.execute("""
-            SELECT id, full_name, username, email
+            SELECT id, full_name, username, email, password
             FROM users
-            WHERE (LOWER(username)=%s OR LOWER(email)=%s)
-            AND password=%s
-        """, (identifier, identifier, password))
+            WHERE LOWER(username)=%s OR LOWER(email)=%s
+        """, (identifier, identifier))
 
         user = cur.fetchone()
         conn.close()
 
-        if user:
+        # Check hashed password
+        if user and check_password_hash(user["password"], password):
             session["user_id"] = user["id"]
             session["username"] = user["username"]
             return redirect("/dashboard")
@@ -65,7 +67,6 @@ def login():
             msg = "Invalid username/email or password."
 
     return render_template("login.html", msg=msg)
-
 
 # ------------------ REGISTER ------------------ #
 @app.route("/register", methods=["GET", "POST"])
@@ -78,19 +79,24 @@ def register():
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
 
+        # 🔐 HASH PASSWORD
+        hashed_password = generate_password_hash(password)
+
         conn = get_db()
         cur = conn.cursor()
 
+        # Check if user exists
         cur.execute("SELECT id FROM users WHERE username=%s OR email=%s", (username, email))
         if cur.fetchone():
             msg = "Username or email already exists."
             conn.close()
             return render_template("register.html", msg=msg)
 
+        # Insert hashed password
         cur.execute("""
             INSERT INTO users (full_name, username, email, password)
             VALUES (%s, %s, %s, %s)
-        """, (full_name, username, email, password))
+        """, (full_name, username, email, hashed_password))
 
         conn.commit()
         conn.close()
@@ -98,7 +104,6 @@ def register():
         return redirect("/login")
 
     return render_template("register.html", msg=msg)
-
 
 # ------------------ LOGOUT ------------------ #
 @app.route("/logout")
