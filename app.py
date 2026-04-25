@@ -1,16 +1,12 @@
 from flask import Flask, render_template, request, redirect, session, jsonify
-import sqlite3
+import mysql.connector
 import json
 import os
 from functools import wraps
 
-BASE_DB = "users.db"
-
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = "replace_this_with_strong_secret"
 
-from flask_mail import Mail, Message
-from itsdangerous import URLSafeTimedSerializer
 
 # ------------------ LOGIN REQUIRED DECORATOR ------------------ #
 def login_required(f):
@@ -21,28 +17,29 @@ def login_required(f):
         return f(*args, **kwargs)
     return wrapper
 
-# ------------------ DB CONNECTION ------------------ #
-import mysql.connector
-import os
 
+# ------------------ DB CONNECTION ------------------ #
 def get_db():
     return mysql.connector.connect(
         host=os.getenv("MYSQLHOST", "localhost"),
         user=os.getenv("MYSQLUSER", "root"),
-        password=os.getenv("MYSQLPASSWORD","Shree#0309"),
+        password=os.getenv("MYSQLPASSWORD"),
         database=os.getenv("MYSQLDATABASE", "carbon_app"),
         port=int(os.getenv("MYSQLPORT", 3306))
     )
+
 
 # ------------------ HOME ------------------ #
 @app.route("/")
 def home():
     return redirect("/login")
 
+
 # ------------------ LOGIN ------------------ #
 @app.route("/login", methods=["GET", "POST"])
 def login():
     msg = ""
+
     if request.method == "POST":
         identifier = request.form.get("identifier", "").strip().lower()
         password = request.form.get("password", "").strip()
@@ -52,8 +49,8 @@ def login():
 
         cur.execute("""
             SELECT id, full_name, username, email
-            FROM users 
-            WHERE (LOWER(username)=%s OR LOWER(email)=%s) 
+            FROM users
+            WHERE (LOWER(username)=%s OR LOWER(email)=%s)
             AND password=%s
         """, (identifier, identifier, password))
 
@@ -69,10 +66,12 @@ def login():
 
     return render_template("login.html", msg=msg)
 
+
 # ------------------ REGISTER ------------------ #
 @app.route("/register", methods=["GET", "POST"])
 def register():
     msg = ""
+
     if request.method == "POST":
         full_name = request.form.get("full_name", "").strip()
         username = request.form.get("username", "").strip()
@@ -81,6 +80,7 @@ def register():
 
         conn = get_db()
         cur = conn.cursor()
+
         cur.execute("SELECT id FROM users WHERE username=%s OR email=%s", (username, email))
         if cur.fetchone():
             msg = "Username or email already exists."
@@ -91,10 +91,14 @@ def register():
             INSERT INTO users (full_name, username, email, password)
             VALUES (%s, %s, %s, %s)
         """, (full_name, username, email, password))
+
         conn.commit()
         conn.close()
+
         return redirect("/login")
+
     return render_template("register.html", msg=msg)
+
 
 # ------------------ LOGOUT ------------------ #
 @app.route("/logout")
@@ -102,25 +106,30 @@ def logout():
     session.clear()
     return redirect("/login")
 
+
 # ------------------ DASHBOARD ------------------ #
 @app.route("/dashboard")
 @login_required
 def dashboard():
     conn = get_db()
     cur = conn.cursor(dictionary=True)
+
     cur.execute("""
         SELECT total_kg, breakdown_json, recommendations
         FROM carbon_results
         WHERE user_id=%s
         ORDER BY id DESC LIMIT 1
     """, (session["user_id"],))
+
     last_result = cur.fetchone()
     conn.close()
+
     return render_template(
         "dashboard.html",
         username=session.get("username"),
         last_result=last_result
     )
+
 
 # ------------------ CALCULATOR PAGE ------------------ #
 @app.route("/calculator")
@@ -128,21 +137,24 @@ def dashboard():
 def calculator_page():
     return render_template("calculator.html")
 
+
 # ------------------ CALCULATE ------------------ #
 @app.route("/calculate", methods=["POST"])
 @login_required
 def calculate():
     data = request.get_json() or {}
 
-    # ------- Travel -------
+    # ------- Travel ------- #
     bike = float(data.get("bike") or 0)
     car = float(data.get("car") or 0)
     bus = float(data.get("bus") or 0)
     train = float(data.get("train") or 0)
+
     travel = bike * 0.12 + car * 0.21 + bus * 0.05 + train * 0.06
 
-    # ------- Electricity -------
+    # ------- Electricity ------- #
     mode = data.get("elec_mode")
+
     if mode == "units":
         units = float(data.get("units") or 0)
         electricity = units * 0.82
@@ -153,22 +165,36 @@ def calculate():
         ac = int(data.get("ac") or 0)
         wm = int(data.get("washing_machine") or 0)
         tv = int(data.get("tv") or 0)
+
         electricity = lights * 0.10 + fans * 0.15 + fridge * 0.6 + ac * 1.5 + wm * 0.5 + tv * 0.2
 
-    # ------- Food -------
-    food_map = {"veg": 1.2, "1-2": 1.8, "2-3": 2.3, "nonveg": 3.5}
+    # ------- Food ------- #
+    food_map = {
+        "veg": 1.2,
+        "1-2": 1.8,
+        "2-3": 2.3,
+        "nonveg": 3.5
+    }
     food = food_map.get(data.get("food"), 0)
 
-    # ------- Waste -------
-    waste_map = {"small": 0.2, "medium": 0.5, "high": 1.0}
+    # ------- Waste ------- #
+    waste_map = {
+        "small": 0.2,
+        "medium": 0.5,
+        "high": 1.0
+    }
+
     waste = waste_map.get(data.get("waste_category"), 0)
+
     habit = data.get("waste_habit")
     if habit == "recycle":
         waste *= 0.7
     elif habit == "compost":
         waste *= 0.5
 
+    # ------- TOTAL ------- #
     total = round(travel + electricity + food + waste, 2)
+
     breakdown = {
         "travel": round(travel, 3),
         "electricity": round(electricity, 3),
@@ -176,71 +202,65 @@ def calculate():
         "waste": round(waste, 3)
     }
 
-    # ------- Recommendations -------
-    recommendations = []
+    # ------- RECOMMENDATIONS ------- #
+    rec = []
 
-    # Travel
     if any([bike, car, bus, train]):
         if travel < 2:
-            recommendations.append("🚗 Travel: Excellent low travel emissions.")
+            rec.append("🚗 Travel: Excellent low travel emissions.")
         elif travel < 8:
-            recommendations.append("🚗 Travel: Use public transport or carpool more.")
+            rec.append("🚗 Travel: Use public transport or carpool more.")
         elif travel < 15:
-            recommendations.append("🚗 Travel: Replace short car trips with cycling.")
+            rec.append("🚗 Travel: Replace short car trips with cycling.")
         else:
-            recommendations.append("🚗 Travel: High travel emissions — reduce solo car use.")
+            rec.append("🚗 Travel: High travel emissions — reduce solo car use.")
 
-    # Electricity
-    if (mode == "units" and units > 0) or \
-       (mode == "appliances" and any([lights, fans, fridge, ac, wm, tv])):
+    if electricity > 0:
         if electricity < 1:
-            recommendations.append("⚡ Electricity: Very low electricity usage — great!")
+            rec.append("⚡ Electricity: Very low usage — great!")
         elif electricity < 4:
-            led_status = data.get("led_bulbs", "no").lower()
-            if led_status == "yes":
-                recommendations.append("⚡ Electricity: Your LEDs are great! Keep it up.")
-            else:
-                recommendations.append("⚡ Electricity: Switch to LED bulbs to save energy.")
+            rec.append("⚡ Electricity: Switch to LED bulbs.")
         elif electricity < 8:
-            recommendations.append("⚡ Electricity: Reduce AC/fan usage.")
+            rec.append("⚡ Electricity: Reduce AC/fan usage.")
         else:
-            recommendations.append("⚡ Electricity: Very high usage — consider solar energy.")
+            rec.append("⚡ Electricity: Consider solar energy.")
 
-    # Food
     if data.get("food") and data.get("food") != "none":
         if food < 1.5:
-            recommendations.append("🍽 Food: Vegetarian diet reduces emissions.")
+            rec.append("🍽 Vegetarian diet reduces emissions.")
         elif food < 2.5:
-            recommendations.append("🍽 Food: Reduce non-veg meals by 1/day.")
-        elif food < 3:
-            recommendations.append("🍽 Food: Prefer plant-based meals.")
+            rec.append("🍽 Reduce non-veg meals.")
         else:
-            recommendations.append("🍽 Food: Reduce red meat to lower CO₂.")
+            rec.append("🍽 Prefer plant-based meals.")
 
-    # Waste
     if data.get("waste_category") and data.get("waste_category") != "none":
         if waste < 0.3:
-            recommendations.append("🗑 Waste: Low waste — great job!")
+            rec.append("🗑 Low waste — great!")
         elif waste < 0.6:
-            recommendations.append("🗑 Waste: Increase recycling.")
-        elif waste < 1:
-            recommendations.append("🗑 Waste: Start composting kitchen waste.")
+            rec.append("🗑 Increase recycling.")
         else:
-            recommendations.append("🗑 Waste: Reduce disposables and compost waste.")
+            rec.append("🗑 Start composting.")
 
-    rec_text = "<\n>".join(recommendations) if recommendations else "No input values provided. Enter values to get recommendations."
+    rec_text = "<br>".join(rec) if rec else "Enter input values to get recommendations."
 
-    # ------- Save to DB Result -------
+    # ------- SAVE ------- #
     conn = get_db()
     cur = conn.cursor()
+
     cur.execute("""
         INSERT INTO carbon_results (user_id, total_kg, breakdown_json, recommendations)
         VALUES (%s, %s, %s, %s)
     """, (session["user_id"], total, json.dumps(breakdown), rec_text))
+
     conn.commit()
     conn.close()
 
-    return jsonify({"total": total, "breakdown": breakdown, "recommendations": rec_text})
+    return jsonify({
+        "total": total,
+        "breakdown": breakdown,
+        "recommendations": rec_text
+    })
+
 
 # ------------------ HISTORY ------------------ #
 @app.route("/history")
@@ -251,6 +271,7 @@ def history():
 
     conn = get_db()
     cur = conn.cursor(dictionary=True)
+
     query = """
         SELECT total_kg, breakdown_json, recommendations, created_at
         FROM carbon_results
@@ -261,16 +282,18 @@ def history():
     if start_date:
         query += " AND created_at >= %s"
         params.append(start_date + " 00:00:00")
+
     if end_date:
         query += " AND created_at <= %s"
         params.append(end_date + " 23:59:59")
 
     query += " ORDER BY created_at ASC"
     cur.execute(query, params)
+
     rows = cur.fetchall()
     conn.close()
 
-    dates = [r["created_at"][:10] for r in rows]
+    dates = [r["created_at"].strftime("%Y-%m-%d") for r in rows]
     totals = [r["total_kg"] for r in rows]
 
     return render_template(
@@ -281,9 +304,6 @@ def history():
         totals=totals
     )
 
-
 # ------------------ RUN ------------------ #
 if __name__ == "__main__":
-    get_db().close()
     app.run(debug=True)
-    
