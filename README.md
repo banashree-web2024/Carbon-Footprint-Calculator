@@ -100,10 +100,6 @@ python app.py
 
 Open the local address displayed by Flask in your browser.
 
-## My Contribution
-
-This was a team project involving four members. My work mainly focused on the backend and database side, including Flask development, MySQL integration, authentication, storing and retrieving calculation results, history tracking, and deployment-related debugging.
-
 ## Future Improvements
 
 * Add monthly and yearly analytics with downloadable reports.
